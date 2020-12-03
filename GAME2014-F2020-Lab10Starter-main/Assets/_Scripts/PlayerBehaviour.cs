@@ -1,8 +1,20 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using Cinemachine;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using Random = UnityEngine.Random;
+
+[System.Serializable]
+public enum ImpulseSounds
+{
+    JUMP,
+    HIT1,
+    HIT2,
+    HIT3,
+    DIE
+}
 
 public class PlayerBehaviour : MonoBehaviour
 {
@@ -24,6 +36,7 @@ public class PlayerBehaviour : MonoBehaviour
     public LayerMask collisionWallLayer;
     public RampDirection rampDirection;
     public bool onRamp;
+    public float rampForceFactor;
 
     [Header("Player Abilities")] 
     public int health;
@@ -31,20 +44,43 @@ public class PlayerBehaviour : MonoBehaviour
     public BarController healthBar;
     public Animator livesHUD;
 
+    [Header("Dust Trail")]
+    public ParticleSystem dustTrail;
+    public Color dustTrailColour;
+
+    [Header("Impulse Sounds")] 
+    public AudioSource[] sounds;
+
+    [Header("Screen Shake")] 
+    public CinemachineVirtualCamera vcam1;
+    public CinemachineBasicMultiChannelPerlin perlin;
+    public float shakeIntensity;
+    public float maxShakeTime;
+    public float shakeTimer;
+    public bool isCameraShaking;
+
     private Rigidbody2D m_rigidBody2D;
     private SpriteRenderer m_spriteRenderer;
     private Animator m_animator;
     private RaycastHit2D groundHit;
+    
 
     // Start is called before the first frame update
     void Start()
     {
         health = 100;
         lives = 3;
+        isCameraShaking = false;
+        shakeTimer = maxShakeTime;
 
         m_rigidBody2D = GetComponent<Rigidbody2D>();
         m_spriteRenderer = GetComponent<SpriteRenderer>();
         m_animator = GetComponent<Animator>();
+        dustTrail = GetComponentInChildren<ParticleSystem>();
+
+        sounds = GetComponents<AudioSource>();
+
+        perlin = vcam1.GetCinemachineComponent<CinemachineBasicMultiChannelPerlin>();
     }
 
     // Update is called once per frame
@@ -53,6 +89,17 @@ public class PlayerBehaviour : MonoBehaviour
         _LookInFront();
         _LookAhead();
         _Move();
+
+        if (isCameraShaking)
+        {
+            shakeTimer -= Time.deltaTime;
+            if (shakeTimer <= 0.0f) // timed out
+            {
+                perlin.m_AmplitudeGain = 0.0f;
+                shakeTimer = maxShakeTime;
+                isCameraShaking = false;
+            }
+        }
     }
 
     private void _LookInFront()
@@ -116,13 +163,14 @@ public class PlayerBehaviour : MonoBehaviour
                     transform.localScale = new Vector3(1.0f, 1.0f, 1.0f);
                     if (onRamp && rampDirection == RampDirection.UP)
                     {
-                        m_rigidBody2D.AddForce(Vector2.up * horizontalForce * 0.5f * Time.deltaTime);
+                        m_rigidBody2D.AddForce(Vector2.up * horizontalForce * rampForceFactor * Time.deltaTime);
                     }
                     else if (onRamp && rampDirection == RampDirection.DOWN)
                     {
-                        m_rigidBody2D.AddForce(Vector2.down * horizontalForce * 0.5f * Time.deltaTime);
+                        m_rigidBody2D.AddForce(Vector2.down * horizontalForce * rampForceFactor * Time.deltaTime);
                     }
 
+                    CreateDustTrail();
 
                     m_animator.SetInteger("AnimState", (int)PlayerAnimationType.RUN);
                 }
@@ -133,12 +181,14 @@ public class PlayerBehaviour : MonoBehaviour
                     transform.localScale = new Vector3(-1.0f, 1.0f, 1.0f);
                     if (onRamp && rampDirection == RampDirection.UP)
                     {
-                        m_rigidBody2D.AddForce(Vector2.up * horizontalForce * 0.5f * Time.deltaTime);
+                        m_rigidBody2D.AddForce(Vector2.up * horizontalForce * rampForceFactor * Time.deltaTime);
                     }
                     else if (onRamp && rampDirection == RampDirection.DOWN)
                     {
-                        m_rigidBody2D.AddForce(Vector2.down * horizontalForce * 0.5f * Time.deltaTime);
+                        m_rigidBody2D.AddForce(Vector2.down * horizontalForce * rampForceFactor * Time.deltaTime);
                     }
+
+                    CreateDustTrail();
 
                     m_animator.SetInteger("AnimState", (int)PlayerAnimationType.RUN);
                 }
@@ -154,6 +204,10 @@ public class PlayerBehaviour : MonoBehaviour
                 m_rigidBody2D.AddForce(Vector2.up * verticalForce);
                 m_animator.SetInteger("AnimState", (int) PlayerAnimationType.JUMP);
                 isJumping = true;
+
+                sounds[(int) ImpulseSounds.JUMP].Play();
+
+                CreateDustTrail();
             }
             else
             {
@@ -195,10 +249,24 @@ public class PlayerBehaviour : MonoBehaviour
         }
     }
 
+    private void OnCollisionStay2D(Collision2D other)
+    {
+        if (other.gameObject.CompareTag("Enemy"))
+        {
+            // Damage Delay
+            if (Time.frameCount % 20 == 0)
+            {
+                TakeDamage(5);
+            }
+        }
+    }
+
     public void LoseLife()
     {
         lives -= 1;
 
+        sounds[(int) ImpulseSounds.DIE].Play();
+        
         livesHUD.SetInteger("LivesState", lives);
 
         if (lives > 0)
@@ -219,9 +287,32 @@ public class PlayerBehaviour : MonoBehaviour
         health -= damage;
         healthBar.SetValue(health);
 
+        PlayRandomHitSound();
+
+        ShakeCamera();
+
         if (health <= 0)
         {
             LoseLife();
         }
+    }
+
+    private void CreateDustTrail()
+    {
+        dustTrail.GetComponent<Renderer>().material.SetColor("_Color", dustTrailColour);
+
+        dustTrail.Play();
+    }
+
+    private void PlayRandomHitSound()
+    {
+        var randomHitSound = Random.Range(1, 3);
+        sounds[randomHitSound].Play();
+    }
+
+    private void ShakeCamera()
+    {
+        perlin.m_AmplitudeGain = shakeIntensity;
+        isCameraShaking = true;
     }
 }
